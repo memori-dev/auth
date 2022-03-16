@@ -15,7 +15,7 @@ func main() {
 	authenticator := &auth.Authenticator{
 		Public:  pub,
 		Private: priv,
-		//EncryptionKey: jwt.NewEncryptionKey(),
+		//EncryptionKey: auth.NewEncryptionKey(),
 	}
 
 	message := "data"
