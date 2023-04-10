@@ -6,34 +6,43 @@ import (
 	"github.com/memori-dev/auth"
 )
 
-func main() {
+type Auth struct {
+	Key string
+}
+
+func example[T any](secret *T) {
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		panic(err)
 	}
 
-	authenticator := &auth.Authenticator{
-		Public:  pub,
-		Private: priv,
-		//EncryptionKey: auth.NewEncryptionKey(),
+	authenticator := &auth.Authenticator[T]{
+		Public:        pub,
+		Private:       priv,
+		EncryptionKey: auth.NewEncryptionKey(),
 	}
 
-	message := "data"
-	fmt.Println(message)
+	fmt.Printf("secret: %v\n", *secret)
 
-	token, err := authenticator.Generate(message)
+	token, err := authenticator.GenerateStr(secret)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(token)
+	fmt.Printf("token: %s\n", token)
 
-	//token = "1647322999" + token[strings.Index(token, "."):]
-	//fmt.Println(token)
-
-	data := ""
-	if err := authenticator.Parse([]byte(token), &data, 0); err != nil {
+	out, err := authenticator.Decode([]byte(token), 100)
+	if err != nil {
 		panic(err)
 	}
 
-	fmt.Println(data)
+	fmt.Printf("in: %v, out: %v\n", *secret, *out)
+}
+
+func main() {
+	// String
+	str := "secret"
+	example(&str)
+
+	// Auth
+	example(&Auth{Key: "secret"})
 }

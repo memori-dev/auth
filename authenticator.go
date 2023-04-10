@@ -5,12 +5,18 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"github.com/shamaton/msgpack"
 	"strconv"
 	"time"
 )
 
 var encoding = base64.RawURLEncoding
+
+var (
+	ErrExpired  = errors.New("authentication expired")
+	ErrModified = errors.New("payload or signature was modified")
+)
 
 func encode(src []byte) []byte {
 	dst := make([]byte, encoding.EncodedLen(len(src)))
@@ -29,7 +35,7 @@ func decode(src []byte) ([]byte, error) {
 	return dst, nil
 }
 
-type Authenticator struct {
+type Authenticator[A any] struct {
 	// Required
 	Public  ed25519.PublicKey
 	Private ed25519.PrivateKey
@@ -38,11 +44,11 @@ type Authenticator struct {
 	EncryptionKey *[32]byte
 }
 
-func (self *Authenticator) Parse(token []byte, dst interface{}, ttl int64) error {
+func (this *Authenticator[A]) Parse(token []byte, dst *A, ttl int64) error {
 	// Check for correct number of sections
 	split := bytes.Split(token, []byte{'.'})
 	if len(split) != 3 {
-		return errors.New("token is missing section(s)")
+		return errors.New(fmt.Sprintf("expected 3 sections in token, but received %d", len(split)))
 	}
 
 	// Pull timestamp
@@ -53,7 +59,7 @@ func (self *Authenticator) Parse(token []byte, dst interface{}, ttl int64) error
 
 	// Check if expired
 	if time.Now().Unix()-ttl > ts {
-		return errors.New("expired")
+		return ErrExpired
 	}
 
 	// Pull signature
@@ -63,8 +69,8 @@ func (self *Authenticator) Parse(token []byte, dst interface{}, ttl int64) error
 	}
 
 	// Check signature
-	if !ed25519.Verify(self.Public, token[:bytes.LastIndex(token, []byte{'.'})], sig) {
-		return errors.New("payload or signature was modified")
+	if !ed25519.Verify(this.Public, token[:bytes.LastIndex(token, []byte{'.'})], sig) {
+		return ErrModified
 	}
 
 	// Decode data
@@ -74,9 +80,9 @@ func (self *Authenticator) Parse(token []byte, dst interface{}, ttl int64) error
 	}
 
 	// Decrypt data
-	if self.EncryptionKey != nil {
+	if this.EncryptionKey != nil {
 		var err error
-		data, err = decrypt(data, self.EncryptionKey)
+		data, err = decrypt(data, this.EncryptionKey)
 		if err != nil {
 			return err
 		}
@@ -90,19 +96,28 @@ func (self *Authenticator) Parse(token []byte, dst interface{}, ttl int64) error
 	return nil
 }
 
-func (self *Authenticator) Generate(src interface{}) (string, error) {
+func (this *Authenticator[A]) Decode(token []byte, ttl int64) (*A, error) {
+	dst := new(A)
+	if err := this.Parse(token, dst, ttl); err != nil {
+		return nil, err
+	}
+
+	return dst, nil
+}
+
+func (this *Authenticator[A]) Generate(src *A) ([]byte, error) {
 	// Marshal data
 	data, err := msgpack.Marshal(src)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	// Encrypt data
-	if self.EncryptionKey != nil {
+	if this.EncryptionKey != nil {
 		var err error
-		data, err = encrypt(data, self.EncryptionKey)
+		data, err = encrypt(data, this.EncryptionKey)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 	}
 
@@ -113,6 +128,15 @@ func (self *Authenticator) Generate(src interface{}) (string, error) {
 	data = bytes.Join([][]byte{[]byte(strconv.FormatInt(time.Now().Unix(), 10)), data}, []byte{'.'})
 
 	// Generate the signature and then the token
-	sig := encode(ed25519.Sign(self.Private, data))
-	return string(bytes.Join([][]byte{data, sig}, []byte{'.'})), nil
+	sig := encode(ed25519.Sign(this.Private, data))
+	return bytes.Join([][]byte{data, sig}, []byte{'.'}), nil
+}
+
+func (this *Authenticator[A]) GenerateStr(src *A) (string, error) {
+	b, err := this.Generate(src)
+	if err != nil {
+		return "", err
+	}
+
+	return string(b), nil
 }
